@@ -109,14 +109,17 @@ HELP_USER = (
     "<b>Қалай есеп беру керек</b>\n"
     "Код пен санды жіберіңіз, мысалы: <code>kk:10</code>, <code>kk10</code>, "
     "<code>kk-10</code>, <code>kk_12</code>.\n"
-    "Бірнешеуін бірден: <code>kk:10 ab5</code>\n\n"
+    "Бірнешеуін бірден: <code>kk:10 ab5</code>\n"
+    "Әр кодқа күніне <b>бір мән</b>: жаңа хабарлама бүгінгі мәнді <b>ауыстырады</b>. "
+    "Сондықтан күннің <b>жалпы санын</b> жіберіңіз (мысалы, таңертең kk:10, кешке тағы 5 бет оқысаңыз — kk:15). "
+    "Бүгінгі мәндеріңізді /today арқылы көруге болады. "
+    "Қате жіберсеңіз — дұрысын қайта жіберіңіз, ал <code>kk:0</code> бүгінгі жазбаны өшіреді.\n\n"
     "<b>Командалар</b>\n"
     "/codes – қолжетімді кодтар тізімі\n"
     "/todos – күнделікті тапсырмалар тізімі\n"
     "/today – бүгінгі есебіңіз\n"
     "/week – осы аптадағы есебіңіз\n"
     "/month – осы айдағы есебіңіз\n"
-    "/undo – соңғы жазбаңызды өшіру\n"
     "/help – осы хабарлама"
 )
 
@@ -184,15 +187,6 @@ async def todos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "<b>Күнделікті тапсырмалар</b>\n" + todos_text(), parse_mode=ParseMode.HTML
     )
-
-
-async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    register(update)
-    removed = db.undo_last(update.effective_user.id)
-    if removed:
-        await update.message.reply_text(f"↩️ Өшірілді: {removed[0]}:{removed[1]}")
-    else:
-        await update.message.reply_text("Өшіретін жазба жоқ.")
 
 
 # ---------- reports ----------
@@ -284,9 +278,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    db.add_entries(update.effective_user.id, entries, now())
-    saved = ", ".join(f"{c}:{v}" for c, v in entries)
-    await update.message.reply_text(f"✅ Сақталды: {saved}")
+    lines = []
+    for code, value, prev in db.set_daily_values(update.effective_user.id, entries, now()):
+        was = f" (бұрын: {prev})" if prev is not None and prev != value else ""
+        if value == 0:
+            lines.append(f"🗑 {code}: бүгінгі жазба өшірілді{was}")
+        else:
+            lines.append(f"✅ {code}: {value}{was}")
+    await update.message.reply_text("\n".join(lines))
 
 
 # ---------- admin: codes & todos ----------
@@ -515,7 +514,6 @@ USER_COMMANDS = [
     BotCommand("today", "Бүгінгі есеп (админ: /today all)"),
     BotCommand("week", "Осы аптаның есебі (админ: /week all)"),
     BotCommand("month", "Осы айдың есебі (админ: /month all)"),
-    BotCommand("undo", "Соңғы жазбаны өшіру"),
     BotCommand("help", "Анықтама"),
 ]
 
@@ -567,7 +565,6 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("codes", codes_cmd))
     app.add_handler(CommandHandler("todos", todos_cmd))
-    app.add_handler(CommandHandler("undo", undo_cmd))
     for period in ("today", "week", "month"):
         app.add_handler(CommandHandler(period, make_report_handler(period)))
 

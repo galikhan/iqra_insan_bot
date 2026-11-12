@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 DEFAULT_NOTIFY_TIMES = "10:00,18:00"
@@ -114,23 +114,28 @@ class DB:
             c.execute("DELETE FROM todos")
 
     # --- entries ---
-    def add_entries(self, user_id: int, items: List[Tuple[str, int]], when: datetime):
+    def set_daily_values(
+        self, user_id: int, items: List[Tuple[str, int]], when: datetime
+    ) -> List[Tuple[str, int, Optional[int]]]:
+        """One value per (user, code, day): the new value replaces that day's previous one.
+        Value 0 removes the day's entry. Returns (code, new_value, previous_value_or_None)."""
+        day_start = when.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        latest = dict(items)  # same code twice in one message -> last one wins
+        result = []
         with self.conn() as c:
-            c.executemany(
-                "INSERT INTO entries(user_id, code, value, created_at) VALUES (?, ?, ?, ?)",
-                [(user_id, code, value, when.isoformat()) for code, value in items],
-            )
-
-    def undo_last(self, user_id: int) -> Optional[Tuple[str, int]]:
-        with self.conn() as c:
-            row = c.execute(
-                "SELECT id, code, value FROM entries WHERE user_id=? ORDER BY id DESC LIMIT 1",
-                (user_id,),
-            ).fetchone()
-            if not row:
-                return None
-            c.execute("DELETE FROM entries WHERE id=?", (row[0],))
-            return row[1], row[2]
+            for code, value in latest.items():
+                where = "user_id=? AND code=? AND created_at>=? AND created_at<?"
+                args = (user_id, code, day_start.isoformat(), day_end.isoformat())
+                prev = c.execute(f"SELECT SUM(value) FROM entries WHERE {where}", args).fetchone()[0]
+                c.execute(f"DELETE FROM entries WHERE {where}", args)
+                if value > 0:
+                    c.execute(
+                        "INSERT INTO entries(user_id, code, value, created_at) VALUES (?, ?, ?, ?)",
+                        (user_id, code, value, when.isoformat()),
+                    )
+                result.append((code, value, prev))
+        return result
 
     def sums(self, since: datetime, user_id: Optional[int] = None) -> List[Tuple]:
         """Per-code sums since `since`. If user_id is None, grouped by user too."""

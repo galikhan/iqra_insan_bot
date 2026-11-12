@@ -17,6 +17,8 @@ Every user (including admins) must press **/start** once to get registered and r
 
 Send `kk:10`, `kk10`, `kk-10`, `kk_12` (several at once: `kk:10 ab5`). Only codes listed in `/codes` are accepted.
 
+One value per code per day: a new message **replaces** today's value for that code, so users send the day's total (`kk:10` in the morning, `kk:15` after reading 5 more pages). `kk:0` deletes today's value.
+
 ## Commands
 
 | Everyone | |
@@ -24,7 +26,6 @@ Send `kk:10`, `kk10`, `kk-10`, `kk_12` (several at once: `kk:10 ab5`). Only code
 | `/codes` | list codes |
 | `/todos` | daily todo list |
 | `/today` `/week` `/month` | your sums per code |
-| `/undo` | delete your last entry |
 
 | Admin | |
 |---|---|
