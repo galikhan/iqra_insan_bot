@@ -35,4 +35,4 @@ Send `kk:10`, `kk10`, `kk-10`, `kk_12` (several at once: `kk:10 ab5`). Only code
 | `/users` | registered users |
 | `/today all` (also week/month) | report for all users |
 
-Week starts Monday; month starts on the 1st. Times use `TIMEZONE`.
+Week runs Wednesday–Tuesday; month starts on the 1st. Times use `TIMEZONE`.
