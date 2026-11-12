@@ -41,7 +41,12 @@ log = logging.getLogger("bot")
 db = DB(DB_PATH)
 
 # kk:10, kk10, kk-10, kk_12, "kk 10" — several per message allowed (separated by space/comma/newline)
-ENTRY_RE = re.compile(r"([a-zA-Z]+)\s*[:\-_=]?\s*(\d+)")
+# Codes are stored in Latin. Cyrillic letters that look like Latin ones are mapped to them,
+# so "ск" (Cyrillic) == "ck" (Latin). Any Cyrillic/Kazakh letter is accepted by the parser;
+# ones without a Latin twin simply won't match an existing code.
+CYR_TO_LAT = str.maketrans("авеёкмнорстухіһү", "abeekmhopctyxihy")
+LETTERS = "a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ"
+ENTRY_RE = re.compile(rf"([{LETTERS}]+)\s*[:\-_=]?\s*(\d+)")
 TIME_RE = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
 NOTIFY_JOB_PREFIX = "notify_"
 WEEK_START_WEEKDAY = 2  # Wednesday
@@ -86,7 +91,11 @@ def parse_entries(text: str) -> Optional[List[Tuple[str, int]]]:
     leftover = ENTRY_RE.sub("", stripped)
     if re.sub(r"[\s,;]+", "", leftover):
         return None  # message has other text, not a pure entry message
-    return [(m.group(1).lower(), int(m.group(2))) for m in matches]
+    return [(normalize_code(m.group(1)), int(m.group(2))) for m in matches]
+
+
+def normalize_code(code: str) -> str:
+    return code.lower().translate(CYR_TO_LAT)
 
 
 # ---------- general commands ----------
@@ -258,10 +267,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def add_code_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args or not re.fullmatch(r"[a-zA-Z]+", context.args[0]):
-        await update.message.reply_text("Қолданылуы: /add_code <әріптер> [сипаттама]")
+    code = normalize_code(context.args[0]) if context.args else ""
+    if not re.fullmatch(r"[a-z]+", code):
+        await update.message.reply_text(
+            "Қолданылуы: /add_code <латын әріптері> [сипаттама]\n"
+            "Код латын әріптерінен тұруы керек (немесе оларға ұқсас кирилл әріптерінен: а, с, к, о, р ...)."
+        )
         return
-    code = context.args[0].lower()
     desc = " ".join(context.args[1:])
     db.add_code(code, desc)
     await update.message.reply_text(f"✅ '{code}' коды сақталды.")
@@ -272,7 +284,7 @@ async def del_code_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Қолданылуы: /del_code <код>")
         return
-    code = context.args[0].lower()
+    code = normalize_code(context.args[0])
     ok = db.delete_code(code)
     await update.message.reply_text(f"🗑 '{code}' коды өшірілді." if ok else "Мұндай код жоқ.")
 
