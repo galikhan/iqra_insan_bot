@@ -34,6 +34,9 @@ Send `kk:10`, `kk10`, `kk-10`, `kk_12` (several at once: `kk:10 ab5`). Only code
 | `/set_notification_at 10:00 18:00` | reminder times (default 10:00, 18:00) |
 | `/notify_now` | send reminder now |
 | `/users` | registered users |
+| `/set_report_group` (send inside the group) | post daily report of all users to that group |
+| `/set_report_at 20:00` / `/unset_report_group` | group report time (default 20:00) / stop it |
+| `/report_now` | post today's report to the group now |
 | `/today all` (also week/month) | report for all users |
 
 Week runs Wednesday–Tuesday; month starts on the 1st. Times use `TIMEZONE`.

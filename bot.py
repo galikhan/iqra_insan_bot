@@ -49,6 +49,8 @@ LETTERS = "a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ"
 ENTRY_RE = re.compile(rf"([{LETTERS}]+)\s*[:\-_=]?\s*(\d+)")
 TIME_RE = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
 NOTIFY_JOB_PREFIX = "notify_"
+GROUP_REPORT_JOB = "group_report"
+DEFAULT_GROUP_REPORT_TIME = "20:00"
 WEEK_START_WEEKDAY = 2  # Wednesday
 
 
@@ -68,6 +70,9 @@ def admin_only(func):
 
 
 def register(update: Update):
+    # Only private chats: chat_id is where personal reminders go, never a group.
+    if update.effective_chat.type != "private":
+        return
     u = update.effective_user
     db.upsert_user(u.id, update.effective_chat.id, u.username, u.full_name)
 
@@ -125,6 +130,10 @@ HELP_ADMIN = (
     "/clear_todos – барлық тапсырмаларды өшіру\n"
     "/set_notification_at 10:00 18:00 – еске салу уақытын орнату\n"
     "/notify_now – еске салуды барлығына қазір жіберу\n"
+    "/set_report_group – (топта жазу) күнделікті есепті осы топқа жіберу\n"
+    "/unset_report_group – топқа есеп жіберуді тоқтату\n"
+    "/set_report_at 20:00 – топқа есеп жіберу уақыты\n"
+    "/report_now – бүгінгі есепті топқа қазір жіберу\n"
     "/users – тіркелген пайдаланушылар тізімі\n"
     "/today all, /week all, /month all – барлық пайдаланушылардың есебі"
 )
@@ -203,6 +212,24 @@ def period_start(period: str) -> datetime:
 TITLES = {"today": "Бүгін", "week": "Осы апта", "month": "Осы ай"}
 
 
+def build_all_report(period: str) -> str:
+    since = period_start(period)
+    header = f"📊 <b>{TITLES[period]}</b> ({since:%d.%m.%Y} бастап)"
+    rows = db.sums(since)
+    if not rows:
+        return header + "\n\nЖазбалар жоқ."
+    lines, totals, current = [header], {}, None
+    for name, code, total in rows:
+        if name != current:
+            lines.append(f"\n👤 <b>{esc(name)}</b>")
+            current = name
+        lines.append(f"  {esc(code)}: {total}")
+        totals[code] = totals.get(code, 0) + total
+    lines.append("\n<b>Барлығы</b>")
+    lines += [f"  {esc(c)}: {v}" for c, v in sorted(totals.items())]
+    return "\n".join(lines)
+
+
 def make_report_handler(period: str):
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         register(update)
@@ -214,20 +241,7 @@ def make_report_handler(period: str):
             if not is_admin(uid):
                 await update.message.reply_text("⛔ Барлығының есебін тек админдер көре алады.")
                 return
-            rows = db.sums(since)
-            if not rows:
-                await update.message.reply_text(header + "\n\nЖазбалар жоқ.", parse_mode=ParseMode.HTML)
-                return
-            lines, totals, current = [header], {}, None
-            for name, code, total in rows:
-                if name != current:
-                    lines.append(f"\n👤 <b>{esc(name)}</b>")
-                    current = name
-                lines.append(f"  {esc(code)}: {total}")
-                totals[code] = totals.get(code, 0) + total
-            lines.append("\n<b>Барлығы</b>")
-            lines += [f"  {esc(c)}: {v}" for c, v in sorted(totals.items())]
-            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+            await update.message.reply_text(build_all_report(period), parse_mode=ParseMode.HTML)
             return
 
         rows = db.sums(since, user_id=uid)
@@ -409,6 +423,73 @@ async def set_notification_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(f"✅ Еске салулар {', '.join(times)} уақытында жіберіледі ({TZ.key}).")
 
 
+# ---------- daily report to group ----------
+
+async def send_group_report(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = db.get_setting("report_group_id")
+    if not chat_id:
+        return
+    try:
+        await context.bot.send_message(int(chat_id), build_all_report("today"), parse_mode=ParseMode.HTML)
+    except Exception as e:  # bot removed from group, group upgraded to supergroup, etc.
+        log.warning("Failed to send group report to %s: %s", chat_id, e)
+
+
+def schedule_group_report(app: Application):
+    for job in app.job_queue.get_jobs_by_name(GROUP_REPORT_JOB):
+        job.schedule_removal()
+    t = db.get_setting("report_time", DEFAULT_GROUP_REPORT_TIME)
+    h, m = map(int, t.split(":"))
+    app.job_queue.run_daily(send_group_report, time=time(h, m, tzinfo=TZ), name=GROUP_REPORT_JOB)
+    log.info("Group report scheduled at %s (group %s)", t, db.get_setting("report_group_id"))
+
+
+@admin_only
+async def set_report_group_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type == "private":
+        await update.message.reply_text(
+            "Бұл команданы есеп жіберілетін топтың ішінде жазыңыз (алдымен ботты топқа қосыңыз)."
+        )
+        return
+    db.set_setting("report_group_id", str(chat.id))
+    t = db.get_setting("report_time", DEFAULT_GROUP_REPORT_TIME)
+    await update.message.reply_text(
+        f"✅ Күнделікті есеп осы топқа сағат {t}-де ({TZ.key}) жіберіледі."
+    )
+
+
+@admin_only
+async def unset_report_group_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db.set_setting("report_group_id", None)
+    await update.message.reply_text("🗑 Топқа есеп жіберу тоқтатылды.")
+
+
+@admin_only
+async def set_report_at_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    m = TIME_RE.match(context.args[0]) if context.args else None
+    if not m:
+        current = db.get_setting("report_time", DEFAULT_GROUP_REPORT_TIME)
+        await update.message.reply_text(
+            f"Қазіргі уақыт: {current}\nҚолданылуы: /set_report_at 20:00"
+        )
+        return
+    t = f"{int(m.group(1)):02d}:{m.group(2)}"
+    db.set_setting("report_time", t)
+    schedule_group_report(context.application)
+    group = "орнатылған" if db.get_setting("report_group_id") else "әлі орнатылмаған (топта /set_report_group жазыңыз)"
+    await update.message.reply_text(f"✅ Топқа есеп уақыты: {t} ({TZ.key}). Топ {group}.")
+
+
+@admin_only
+async def report_now_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not db.get_setting("report_group_id"):
+        await update.message.reply_text("Топ орнатылмаған. Топтың ішінде /set_report_group жазыңыз.")
+        return
+    await send_group_report(context)
+    await update.message.reply_text("✅ Есеп топқа жіберілді.")
+
+
 @admin_only
 async def notify_now_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_notification(context)
@@ -436,6 +517,10 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     BotCommand("clear_todos", "Барлық тапсырмаларды өшіру"),
     BotCommand("set_notification_at", "Еске салу уақытын орнату: /set_notification_at 10:00 18:00"),
     BotCommand("notify_now", "Еске салуды барлығына қазір жіберу"),
+    BotCommand("set_report_group", "Топта жазыңыз: күнделікті есеп осы топқа"),
+    BotCommand("unset_report_group", "Топқа есеп жіберуді тоқтату"),
+    BotCommand("set_report_at", "Топқа есеп уақыты: /set_report_at 20:00"),
+    BotCommand("report_now", "Бүгінгі есепті топқа қазір жіберу"),
     BotCommand("users", "Тіркелген пайдаланушылар тізімі"),
 ]
 
@@ -452,6 +537,7 @@ async def set_admin_menu(bot, admin_id: int) -> bool:
 
 async def post_init(app: Application):
     schedule_notifications(app)
+    schedule_group_report(app)
     # Remove menus left by other backends: these scopes take priority over the default one.
     for scope in (BotCommandScopeAllPrivateChats(), BotCommandScopeAllGroupChats(),
                   BotCommandScopeAllChatAdministrators()):
@@ -482,6 +568,10 @@ def main():
     app.add_handler(CommandHandler("clear_todos", clear_todos_cmd))
     app.add_handler(CommandHandler("set_notification_at", set_notification_cmd))
     app.add_handler(CommandHandler("notify_now", notify_now_cmd))
+    app.add_handler(CommandHandler("set_report_group", set_report_group_cmd))
+    app.add_handler(CommandHandler("unset_report_group", unset_report_group_cmd))
+    app.add_handler(CommandHandler("set_report_at", set_report_at_cmd))
+    app.add_handler(CommandHandler("report_now", report_now_cmd))
     app.add_handler(CommandHandler("users", users_cmd))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))

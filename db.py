@@ -156,6 +156,22 @@ class DB:
             row = c.execute("SELECT value FROM settings WHERE key='notify_times'").fetchone()
         return [t for t in (row[0] if row else DEFAULT_NOTIFY_TIMES).split(",") if t]
 
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self.conn() as c:
+            row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: Optional[str]):
+        with self.conn() as c:
+            if value is None:
+                c.execute("DELETE FROM settings WHERE key=?", (key,))
+            else:
+                c.execute(
+                    "INSERT INTO settings(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
+                )
+
     def set_notify_times(self, times: List[str]):
         with self.conn() as c:
             c.execute(
