@@ -56,8 +56,10 @@ class DB:
             c.close()
 
     # --- users ---
-    def upsert_user(self, user_id: int, chat_id: int, username: Optional[str], full_name: str):
+    def upsert_user(self, user_id: int, chat_id: int, username: Optional[str], full_name: str) -> bool:
+        """Insert or update a user. Returns True if the user is new."""
         with self.conn() as c:
+            is_new = c.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone() is None
             c.execute(
                 """INSERT INTO users(id, chat_id, username, full_name, created_at)
                    VALUES (?, ?, ?, ?, ?)
@@ -65,6 +67,7 @@ class DB:
                        username=excluded.username, full_name=excluded.full_name""",
                 (user_id, chat_id, username, full_name, datetime.now().isoformat()),
             )
+        return is_new
 
     def all_users(self) -> List[Tuple[int, int, str]]:
         with self.conn() as c:

@@ -22,6 +22,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -69,12 +70,31 @@ def admin_only(func):
     return wrapper
 
 
-def register(update: Update):
-    # Only private chats: chat_id is where personal reminders go, never a group.
-    if update.effective_chat.type != "private":
+def register(update: Update) -> bool:
+    """Save/refresh the user. Returns True if they are new. Private chats only:
+    chat_id is where personal reminders go, never a group."""
+    if not update.effective_chat or update.effective_chat.type != "private" or not update.effective_user:
+        return False
+    u = update.effective_user
+    return db.upsert_user(u.id, update.effective_chat.id, u.username, u.full_name)
+
+
+async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Runs before every handler: registers the user and tells admins about newcomers."""
+    if not register(update):
         return
     u = update.effective_user
-    db.upsert_user(u.id, update.effective_chat.id, u.username, u.full_name)
+    username = f" (@{u.username})" if u.username else ""
+    text = (
+        f"🆕 Жаңа пайдаланушы: <b>{esc(u.full_name)}</b>{esc(username)}\n"
+        f"ID: <code>{u.id}</code>\n"
+        f"Барлығы: {len(db.all_users())}"
+    )
+    for admin_id in ADMIN_IDS - {u.id}:
+        try:
+            await context.bot.send_message(admin_id, text, parse_mode=ParseMode.HTML)
+        except Exception as e:  # admin hasn't started the bot yet, etc.
+            log.warning("Failed to notify admin %s about new user: %s", admin_id, e)
 
 
 def now() -> datetime:
@@ -561,6 +581,8 @@ def main():
         log.warning("ADMIN_IDS is empty — nobody will have admin rights.")
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # group=-1 runs before the normal handlers for every update
+    app.add_handler(TypeHandler(Update, track_user), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("codes", codes_cmd))
