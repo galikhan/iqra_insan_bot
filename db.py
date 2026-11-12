@@ -150,6 +150,15 @@ class DB:
                 (since.isoformat(),),
             ).fetchall()
 
+    def sums_by_user(self, since: datetime) -> List[Tuple[int, str, int]]:
+        """(user_id, code, total) for every user that has entries since `since`."""
+        with self.conn() as c:
+            return c.execute(
+                """SELECT user_id, code, SUM(value) FROM entries
+                   WHERE created_at>=? GROUP BY user_id, code ORDER BY code""",
+                (since.isoformat(),),
+            ).fetchall()
+
     # --- settings ---
     def get_notify_times(self) -> List[str]:
         with self.conn() as c:

@@ -212,21 +212,32 @@ def period_start(period: str) -> datetime:
 TITLES = {"today": "Бүгін", "week": "Осы апта", "month": "Осы ай"}
 
 
+def fmt_sums(items: List[Tuple[str, int]]) -> str:
+    return " · ".join(f"{esc(code)} {total}" for code, total in items)
+
+
 def build_all_report(period: str) -> str:
+    """Compact report: one line per user, who reported and who didn't."""
     since = period_start(period)
-    header = f"📊 <b>{TITLES[period]}</b> ({since:%d.%m.%Y} бастап)"
-    rows = db.sums(since)
-    if not rows:
-        return header + "\n\nЖазбалар жоқ."
-    lines, totals, current = [header], {}, None
-    for name, code, total in rows:
-        if name != current:
-            lines.append(f"\n👤 <b>{esc(name)}</b>")
-            current = name
-        lines.append(f"  {esc(code)}: {total}")
+    users = db.all_users()  # (id, chat_id, full_name)
+    per_user = {}
+    totals = {}
+    for uid, code, total in db.sums_by_user(since):
+        per_user.setdefault(uid, []).append((code, total))
         totals[code] = totals.get(code, 0) + total
-    lines.append("\n<b>Барлығы</b>")
-    lines += [f"  {esc(c)}: {v}" for c, v in sorted(totals.items())]
+
+    names = {uid: name for uid, _, name in users}
+    done = sorted((uid for uid in per_user if uid in names), key=lambda u: names[u].lower())
+    missing = sorted((uid for uid in names if uid not in per_user), key=lambda u: names[u].lower())
+
+    lines = [f"📊 <b>{TITLES[period]}</b> · {since:%d.%m.%Y}" + (f"–{now():%d.%m.%Y}" if period != "today" else "")]
+    lines.append(f"\n✅ <b>Есеп берді ({len(done)}/{len(names)})</b>")
+    lines += [f"{esc(names[u])}: {fmt_sums(per_user[u])}" for u in done] or ["—"]
+    if missing:
+        lines.append(f"\n❌ <b>Есеп бермеді ({len(missing)})</b>")
+        lines.append(", ".join(esc(names[u]) for u in missing))
+    if totals:
+        lines.append(f"\nΣ {fmt_sums(sorted(totals.items()))}")
     return "\n".join(lines)
 
 
