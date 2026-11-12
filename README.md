@@ -29,6 +29,7 @@ Send `kk:10`, `kk10`, `kk-10`, `kk_12` (several at once: `kk:10 ab5`). Only code
 | Admin | |
 |---|---|
 | `/add_code kk Description` / `/del_code kk` | manage codes |
+| `/add_codes` + one `code — description` per line | add many codes at once |
 | `/add_todo text` / `/del_todo 2` / `/clear_todos` | manage daily todos |
 | `/set_notification_at 10:00 18:00` | reminder times (default 10:00, 18:00) |
 | `/notify_now` | send reminder now |

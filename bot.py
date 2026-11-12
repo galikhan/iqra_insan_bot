@@ -118,6 +118,7 @@ HELP_USER = (
 HELP_ADMIN = (
     "\n\n<b>Админ командалары</b>\n"
     "/add_code &lt;код&gt; [сипаттама] – код қосу/өзгерту\n"
+    "/add_codes – бірнеше кодты бірден қосу (әр жолға: код — сипаттама)\n"
     "/del_code &lt;код&gt; – кодты өшіру\n"
     "/add_todo &lt;мәтін&gt; – күнделікті тапсырма қосу\n"
     "/del_todo &lt;нөмір&gt; – тапсырманы нөмірі бойынша өшіру\n"
@@ -289,6 +290,42 @@ async def del_code_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🗑 '{code}' коды өшірілді." if ok else "Мұндай код жоқ.")
 
 
+# one "code — description" per line; separator may be —, –, -, :, = or just a space
+BULK_LINE_RE = re.compile(rf"^\s*([{LETTERS}]+)\s*(?:[—–\-:=]\s*)?(.*?)\s*$")
+
+
+@admin_only
+async def add_codes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    parts = (update.message.text or "").split(None, 1)  # drop "/add_codes"
+    lines = [l for l in (parts[1] if len(parts) > 1 else "").splitlines() if l.strip()]
+    if not lines:
+        await update.message.reply_text(
+            "Қолданылуы (әр жолға бір код):\n"
+            "/add_codes\n"
+            "ck — cevshen\n"
+            "kk — Kuran\n"
+            "rs — Risale"
+        )
+        return
+
+    saved, errors = [], []
+    for line in lines:
+        m = BULK_LINE_RE.match(line)
+        code = normalize_code(m.group(1)) if m else ""
+        if not m or not re.fullmatch(r"[a-z]+", code):
+            errors.append(line.strip())
+            continue
+        db.add_code(code, m.group(2))
+        saved.append(f"<code>{esc(code)}</code> — {esc(m.group(2))}" if m.group(2) else f"<code>{esc(code)}</code>")
+
+    msg = []
+    if saved:
+        msg.append(f"✅ Сақталды ({len(saved)}):\n" + "\n".join(saved))
+    if errors:
+        msg.append(f"❌ Қате жолдар ({len(errors)}):\n" + "\n".join(esc(e) for e in errors))
+    await update.message.reply_text("\n\n".join(msg), parse_mode=ParseMode.HTML)
+
+
 @admin_only
 async def add_todo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args).strip()
@@ -392,6 +429,7 @@ USER_COMMANDS = [
 
 ADMIN_COMMANDS = USER_COMMANDS + [
     BotCommand("add_code", "Код қосу/өзгерту: /add_code kk Сипаттама"),
+    BotCommand("add_codes", "Бірнеше код қосу: әр жолға «код — сипаттама»"),
     BotCommand("del_code", "Кодты өшіру: /del_code kk"),
     BotCommand("add_todo", "Күнделікті тапсырма қосу: /add_todo мәтін"),
     BotCommand("del_todo", "Тапсырманы нөмірі бойынша өшіру: /del_todo 2"),
@@ -437,6 +475,7 @@ def main():
         app.add_handler(CommandHandler(period, make_report_handler(period)))
 
     app.add_handler(CommandHandler("add_code", add_code_cmd))
+    app.add_handler(CommandHandler("add_codes", add_codes_cmd))
     app.add_handler(CommandHandler("del_code", del_code_cmd))
     app.add_handler(CommandHandler("add_todo", add_todo_cmd))
     app.add_handler(CommandHandler("del_todo", del_todo_cmd))
